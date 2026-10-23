@@ -1,0 +1,80 @@
+{
+  "model": "Qwen/Qwen3-4B",
+  "dataset": "math500",
+  "n": 173,
+  "drop_at": 0.5,
+  "allow": [
+    0.25,
+    0.1
+  ],
+  "mock": false,
+  "natural_accuracy": 97.1,
+  "arms": {
+    "cut_now": {
+      "accuracy": 93.6,
+      "think_tokens_vs_natural": 0.5,
+      "mean_answer_tokens": 737
+    },
+    "cut_now_hard": {
+      "accuracy": 93.1,
+      "think_tokens_vs_natural": 0.5,
+      "mean_answer_tokens": 795
+    },
+    "silent_0.25": {
+      "accuracy": 97.1,
+      "think_tokens_vs_natural": 0.75,
+      "mean_answer_tokens": 723
+    },
+    "warn_soft_0.25": {
+      "accuracy": 97.7,
+      "think_tokens_vs_natural": 0.614,
+      "mean_answer_tokens": 719,
+      "closed_itself_share": 0.699
+    },
+    "warn_count_0.25": {
+      "accuracy": 96.0,
+      "think_tokens_vs_natural": 0.567,
+      "mean_answer_tokens": 708,
+      "closed_itself_share": 0.861
+    },
+    "silent_0.1": {
+      "accuracy": 96.0,
+      "think_tokens_vs_natural": 0.6,
+      "mean_answer_tokens": 728
+    },
+    "warn_soft_0.1": {
+      "accuracy": 96.0,
+      "think_tokens_vs_natural": 0.557,
+      "mean_answer_tokens": 702,
+      "closed_itself_share": 0.532
+    },
+    "warn_count_0.1": {
+      "accuracy": 94.8,
+      "think_tokens_vs_natural": 0.539,
+      "mean_answer_tokens": 723,
+      "closed_itself_share": 0.717
+    }
+  },
+  "paired_ci_pp": {
+    "cut_now - cut_now_hard": [
+      -2.3,
+      3.5
+    ],
+    "warn_soft_0.25 - silent_0.25": [
+      -2.3,
+      3.5
+    ],
+    "warn_count_0.25 - silent_0.25": [
+      -4.0,
+      1.7
+    ],
+    "warn_soft_0.1 - silent_0.1": [
+      -2.9,
+      2.9
+    ],
+    "warn_count_0.1 - silent_0.1": [
+      -4.6,
+      1.7
+    ]
+  }
+}

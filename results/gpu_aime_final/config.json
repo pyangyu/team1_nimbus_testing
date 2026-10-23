@@ -1,0 +1,15 @@
+{
+  "model": "Qwen/Qwen3-4B",
+  "dataset": "MathArena/aime_2026",
+  "samples": 8,
+  "drop": 0.5,
+  "allow": [
+    0.25,
+    0.1
+  ],
+  "min_L": 400,
+  "max_len": 40960,
+  "answer_mode": "final",
+  "final_max": 48,
+  "mock": false
+}
