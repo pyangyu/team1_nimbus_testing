@@ -1,82 +1,82 @@
 <mxfile host="app.diagrams.net" agent="GitHub Copilot">
-  <diagram id="budget-drop-sweep-flow" name="调用流程">
+  <diagram id="budget-drop-sweep-flow" name="Execution Flow">
     <mxGraphModel dx="1406" dy="780" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="2200" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="start" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16;fontStyle=1;" value="运行命令&#xa;python gpu/budget_drop_bench.py --sweep ..." vertex="1">
+        <mxCell id="start" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16;fontStyle=1;" value="Run command&#xa;python gpu/budget_drop_bench.py --sweep ..." vertex="1">
           <mxGeometry height="65" width="430" x="485" y="20" as="geometry" />
         </mxCell>
-        <mxCell id="router" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=15;" value="budget_drop_bench.main()&#xa;识别 --sweep 并转交控制权" vertex="1">
+        <mxCell id="router" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=15;" value="budget_drop_bench.main()&#xa;Detects --sweep and delegates control" vertex="1">
           <mxGeometry height="65" width="430" x="485" y="115" as="geometry" />
         </mxCell>
-        <mxCell id="entry" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=15;" value="budget_drop_sweep.main()&#xa;总入口：解析参数、选择题目、选择后端、运行数据集" vertex="1">
+        <mxCell id="entry" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=15;" value="budget_drop_sweep.main()&#xa;Entry point: parse args, select questions and backend, run datasets" vertex="1">
           <mxGeometry height="75" width="430" x="485" y="210" as="geometry" />
         </mxCell>
-        <mxCell id="parse" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="parse_args()&#xa;读取 CLI 参数并校验 cut 网格、样本数等设置" vertex="1">
+        <mxCell id="parse" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="parse_args()&#xa;Read CLI options and validate cut grid, sample count, etc." vertex="1">
           <mxGeometry height="65" width="430" x="485" y="315" as="geometry" />
         </mxCell>
         <mxCell id="mode" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=15;fontStyle=1;" value="--analyze?" vertex="1">
           <mxGeometry height="90" width="150" x="625" y="410" as="geometry" />
         </mxCell>
-        <mxCell id="analyze" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" value="summarize(existing_dir)&#xa;不生成模型输出，只读取已保存的 JSONL" vertex="1">
+        <mxCell id="analyze" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" value="summarize(existing_dir)&#xa;Read saved JSONL only; no model generation" vertex="1">
           <mxGeometry height="70" width="300" x="1000" y="415" as="geometry" />
         </mxCell>
         <mxCell id="analyzeout" parent="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;" value="summary.json&#xa;accuracy_vs_cut.csv" vertex="1">
           <mxGeometry height="60" width="300" x="1000" y="530" as="geometry" />
         </mxCell>
-        <mxCell id="load" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="load_population()&#xa;加载完整 AIME 2026 或 MATH-500 题库" vertex="1">
+        <mxCell id="load" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="load_population()&#xa;Load the full AIME 2026 or MATH-500 question set" vertex="1">
           <mxGeometry height="65" width="430" x="485" y="545" as="geometry" />
         </mxCell>
-        <mxCell id="sample" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="uniform_sample()&#xa;用 seed 在生成前均匀抽取不重复题目" vertex="1">
+        <mxCell id="sample" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="uniform_sample()&#xa;Sample unique questions uniformly by seed, before generation" vertex="1">
           <mxGeometry height="65" width="430" x="485" y="640" as="geometry" />
         </mxCell>
         <mxCell id="backend" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=15;fontStyle=1;" value="--mock?" vertex="1">
           <mxGeometry height="90" width="150" x="625" y="735" as="geometry" />
         </mxCell>
-        <mxCell id="mock" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" value="Mock&#xa;假生成 + 真实 tokenizer&#xa;流程检查，不代表模型结果" vertex="1">
+        <mxCell id="mock" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" value="Mock&#xa;Synthetic generation + real tokenizer&#xa;Pipeline checks only; not model results" vertex="1">
           <mxGeometry height="75" width="260" x="220" y="745" as="geometry" />
         </mxCell>
-        <mxCell id="engine" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" value="Engine&#xa;vLLM + GPU + tokenizer&#xa;正式生成实验数据" vertex="1">
+        <mxCell id="engine" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" value="Engine&#xa;vLLM + GPU + tokenizer&#xa;Generates actual experiment data" vertex="1">
           <mxGeometry height="75" width="260" x="920" y="745" as="geometry" />
         </mxCell>
-        <mxCell id="rundataset" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="run_dataset()&#xa;每个选中的数据集依次执行以下准备步骤" vertex="1">
+        <mxCell id="rundataset" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="run_dataset()&#xa;Run the following setup steps in order for each dataset" vertex="1">
           <mxGeometry height="65" width="430" x="485" y="865" as="geometry" />
         </mxCell>
-        <mxCell id="armspecs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="1. make_arm_specs()&#xa;建立 cut point × cut size 实验网格" vertex="1">
+        <mxCell id="armspecs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="1. make_arm_specs()&#xa;Build the cut-point x cut-size grid" vertex="1">
           <mxGeometry height="65" width="430" x="485" y="950" as="geometry" />
         </mxCell>
-        <mxCell id="promptbuild" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="2. make_prompt()&#xa;对每道选中题目依次构造 tokenizer 输入" vertex="1">
+        <mxCell id="promptbuild" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="2. make_prompt()&#xa;Build tokenizer input for each selected question" vertex="1">
           <mxGeometry height="65" width="430" x="485" y="1035" as="geometry" />
         </mxCell>
-        <mxCell id="runfiles" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="3. 组装 config / manifest&#xa;ensure_run_files() 创建或核对配置与题目清单" vertex="1">
+        <mxCell id="runfiles" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="3. Assemble config / manifest&#xa;ensure_run_files() creates or validates run files" vertex="1">
           <mxGeometry height="70" width="430" x="485" y="1120" as="geometry" />
         </mxCell>
-        <mxCell id="phasea" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="Phase A：自然推理基线&#xa;read_jsonl(phase_a.jsonl) 检查已有轨迹&#xa;缺少的样本调用 Engine/Mock.generate()；stable_seed() 固定样本随机种子&#xa;append_jsonl() 保存轨迹，支持中断后续跑" vertex="1">
+        <mxCell id="phasea" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="Phase A: Natural reasoning baseline&#xa;read_jsonl(phase_a.jsonl) checks existing traces&#xa;Missing samples call Engine/Mock.generate(); stable_seed() fixes seeds&#xa;append_jsonl() saves traces for resume" vertex="1">
           <mxGeometry height="105" width="600" x="400" y="1220" as="geometry" />
         </mxCell>
-        <mxCell id="parsephasea" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="natural_records()&#xa;trace_fields() 解析 think 边界、长度 L 和 capped 状态&#xa;behavior_metrics() + TB.grade() 计算自然推理基线&#xa;写入 natural.jsonl" vertex="1">
+        <mxCell id="parsephasea" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="natural_records()&#xa;trace_fields() finds think boundaries, length L, and censor status&#xa;behavior_metrics() + TB.grade() score the natural baseline&#xa;Write natural.jsonl" vertex="1">
           <mxGeometry height="95" width="600" x="400" y="1350" as="geometry" />
         </mxCell>
-        <mxCell id="phaseb" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="Phase B：run_drop_tests()&#xa;逐条自然轨迹 × 每个实验组，跳过已完成 arm&#xa;add_cut_and_size() 把相对 L 的比例换算成 token 数" vertex="1">
+        <mxCell id="phaseb" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="Phase B: run_drop_tests()&#xa;Process each natural trace x arm; skip completed arms&#xa;add_cut_and_size() converts fractions of L to tokens" vertex="1">
           <mxGeometry height="85" width="600" x="400" y="1470" as="geometry" />
         </mxCell>
-        <mxCell id="arms" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="构造实验输入&#xa;cut_now / silent：复用自然推理前缀&#xa;warn_soft / warn_count：前缀 + 提示，再生成续写&#xa;resample：从原题重新生成，预算为 cut + window" vertex="1">
+        <mxCell id="arms" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="Build arm inputs&#xa;cut_now / silent: reuse natural prefix&#xa;warn_soft / warn_count: prefix + notice, then continue&#xa;resample: regenerate from question with cut + window budget" vertex="1">
           <mxGeometry height="100" width="340" x="210" y="1590" as="geometry" />
         </mxCell>
-        <mxCell id="continue" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="warn / resample 续写&#xa;Engine/Mock.generate(stop_ids)&#xa;clean_thinking_ids() 处理边界标记" vertex="1">
+        <mxCell id="continue" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="warn / resample continuation&#xa;Engine/Mock.generate(stop_ids)&#xa;clean_thinking_ids() removes boundary markers" vertex="1">
           <mxGeometry height="85" width="340" x="600" y="1590" as="geometry" />
         </mxCell>
-        <mxCell id="answer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="最终答案生成&#xa;answer_cap() 计算可用答案长度&#xa;Engine/Mock.generate() 生成答案" vertex="1">
+        <mxCell id="answer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="Generate final answer&#xa;answer_cap() computes available answer length&#xa;Engine/Mock.generate() generates answer" vertex="1">
           <mxGeometry height="80" width="340" x="600" y="1700" as="geometry" />
         </mxCell>
-        <mxCell id="score" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="评分与行为指标&#xa;TB.grade() + behavior_metrics()&#xa;写入 jobs.jsonl（答案文本、正确性、泄漏、复查、方法切换）" vertex="1">
+        <mxCell id="score" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" value="Score and measure behavior&#xa;TB.grade() + behavior_metrics()&#xa;Write answer, accuracy, leakage, re-checks, and approach switches to jobs.jsonl" vertex="1">
           <mxGeometry height="85" width="340" x="600" y="1805" as="geometry" />
         </mxCell>
-        <mxCell id="summary" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="summarize()&#xa;读取 natural.jsonl / jobs.jsonl&#xa;stats() 汇总各 arm；bootstrap_cluster_mean() 按题目重抽样&#xa;stable_seed() 固定统计随机种子" vertex="1">
+        <mxCell id="summary" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" value="summarize()&#xa;Read natural.jsonl / jobs.jsonl&#xa;stats() aggregates arms; bootstrap_cluster_mean() resamples by question&#xa;stable_seed() fixes the statistics seed" vertex="1">
           <mxGeometry height="95" width="600" x="400" y="1920" as="geometry" />
         </mxCell>
-        <mxCell id="outputs" parent="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;" value="最终输出&#xa;summary.json：汇总和配对比较&#xa;accuracy_vs_cut.csv：表格化指标" vertex="1">
+        <mxCell id="outputs" parent="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;" value="Final outputs&#xa;summary.json: aggregates and paired comparisons&#xa;accuracy_vs_cut.csv: tabular metrics" vertex="1">
           <mxGeometry height="70" width="400" x="500" y="2050" as="geometry" />
         </mxCell>
         <mxCell id="e1" edge="1" parent="1" source="start" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="router">
@@ -88,10 +88,10 @@
         <mxCell id="e3" edge="1" parent="1" source="entry" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="parse">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e4" edge="1" parent="1" source="parse" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="mode" value="参数有效">
+        <mxCell id="e4" edge="1" parent="1" source="parse" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="mode" value="Valid options">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e5" edge="1" parent="1" source="mode" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="analyze" value="是">
+        <mxCell id="e5" edge="1" parent="1" source="mode" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="analyze" value="Yes">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="900" y="455" />
@@ -101,7 +101,7 @@
         <mxCell id="e6" edge="1" parent="1" source="analyze" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="analyzeout">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e7" edge="1" parent="1" source="mode" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="load" value="否">
+        <mxCell id="e7" edge="1" parent="1" source="mode" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="load" value="No">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e8" edge="1" parent="1" source="load" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="sample">
@@ -110,14 +110,14 @@
         <mxCell id="e9" edge="1" parent="1" source="sample" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="backend">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e10" edge="1" parent="1" source="backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="mock" value="是">
+        <mxCell id="e10" edge="1" parent="1" source="backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="mock" value="Yes">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="350" y="780" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e11" edge="1" parent="1" source="backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="engine" value="否">
+        <mxCell id="e11" edge="1" parent="1" source="backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" target="engine" value="No">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1050" y="780" />
