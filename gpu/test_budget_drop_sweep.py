@@ -14,12 +14,18 @@ from budget_drop_sweep import (
     behavior_metrics,
     bootstrap_cluster_mean,
     make_arm_specs,
+    parse_args,
     run_drop_tests,
     stable_seed,
     summarize,
     uniform_sample,
 )
-from evaluation_contract import build_evaluation_manifest
+from budgetthinker_adapter import (
+    normalize_budgetthinker_outputs,
+    prepare_budgetthinker_dataset,
+)
+from compare_fixed_budget_runs import compare_fixed_budget_runs
+from evaluation_contract import build_evaluation_manifest, problems_from_manifest
 
 
 class BudgetDropSweepTests(unittest.TestCase):
@@ -49,6 +55,156 @@ class BudgetDropSweepTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_evaluation_manifest("toy", duplicate_problems, 1, seed=9)
 
+    def test_frozen_manifest_reconstructs_exact_questions(self):
+        """Later model runs must use the stored text and IDs rather than re-sample."""
+        problems = [{"id": "q1", "q": "Original question", "gold": "42"}]
+        manifest = build_evaluation_manifest("toy", problems, 3, seed=11)
+        self.assertEqual(problems_from_manifest(manifest), problems)
+
+    def test_legacy_manifest_resolves_ids_from_population(self):
+        """Older ID-only manifests remain reusable when their source data is available."""
+        legacy = {"dataset": "toy", "selected_problem_ids": ["q2", "q1"]}
+        population = [
+            {"id": "q1", "q": "Question one", "gold": "11"},
+            {"id": "q2", "q": "Question two", "gold": "22"},
+        ]
+        self.assertEqual(
+            problems_from_manifest(legacy, population),
+            [population[1], population[0]],
+        )
+
+    def test_budgetthinker_data_adapter_preserves_problem_ids(self):
+        """Convert the shared question manifest to the official local JSONL format."""
+        problems = [{"id": "q1", "q": "Question one", "gold": "42"}]
+        manifest = build_evaluation_manifest("toy", problems, 2, seed=9)
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            test_path = prepare_budgetthinker_dataset(manifest_path, root / "data")
+            from budgetthinker_adapter import read_jsonl
+            rows = read_jsonl(test_path)
+            index_map = read_jsonl(root / "data" / "math500" / "lifeline_index_map.jsonl")
+
+        self.assertEqual(rows[0]["idx"], 0)
+        self.assertEqual(rows[0]["question"], "Question one")
+        self.assertEqual(rows[0]["gt_cot"], "\\boxed{42}")
+        self.assertEqual(index_map[0]["question_id"], "q1")
+
+    def test_budgetthinker_output_normalizes_to_paired_sample_rows(self):
+        """Explode official per-question sample arrays into shared sample IDs."""
+        manifest = build_evaluation_manifest(
+            "math500", [{"id": "q1", "q": "Question one", "gold": "42"}], 2, seed=9)
+
+        class FakeTokenizer:
+            def encode(self, text, add_special_tokens=False):
+                return [ord(char) for char in text]
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "manifest.json"
+            output_path = root / "official.jsonl"
+            normalized_path = root / "normalized.jsonl"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            output_path.write_text(json.dumps({
+                "idx": 0,
+                "code": ["Let me verify the result. \\\\boxed{42}",
+                         "Another approach fails. \\\\boxed{41}"],
+                "pred": ["42", "41"],
+            }) + "\n", encoding="utf-8")
+            rows = normalize_budgetthinker_outputs(
+                manifest_path, output_path, normalized_path, FakeTokenizer(), 1024,
+                "fake-budgetthinker")
+
+        self.assertEqual([row["sample_id"] for row in rows],
+                         ["q1#sample=0", "q1#sample=1"])
+        self.assertEqual([row["correct"] for row in rows], [True, False])
+        self.assertEqual(rows[0]["recheck_count"], 1)
+        self.assertEqual(rows[1]["approach_switch_count"], 1)
+
+    def test_fixed_budget_comparison_pairs_samples_and_bootstraps_by_question(self):
+        """Compare only matching question/sample IDs and write a clustered CI."""
+        qwen_rows = [
+            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
+             "question_id": "q1", "sample_id": "q1#sample=0", "correct": True,
+             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
+             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
+             "latency_seconds": None},
+            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
+             "question_id": "q1", "sample_id": "q1#sample=1", "correct": True,
+             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
+             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
+             "latency_seconds": None},
+            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
+             "question_id": "q2", "sample_id": "q2#sample=0", "correct": False,
+             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
+             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
+             "latency_seconds": None},
+            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
+             "question_id": "q2", "sample_id": "q2#sample=1", "correct": True,
+             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
+             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
+             "latency_seconds": None},
+        ]
+        for row in qwen_rows:
+            row["manifest_fingerprint"] = "same-manifest"
+        bt_rows = []
+        for source, correct in zip(qwen_rows, [True, False, False, False]):
+            bt_rows.append({**source, "method": "budgetthinker", "policy": "fixed_budget",
+                            "correct": correct})
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            qwen_path, bt_path = root / "qwen.jsonl", root / "bt.jsonl"
+            qwen_path.write_text("".join(json.dumps(row) + "\n" for row in qwen_rows),
+                                 encoding="utf-8")
+            bt_path.write_text("".join(json.dumps(row) + "\n" for row in bt_rows),
+                               encoding="utf-8")
+            summary = compare_fixed_budget_runs(qwen_path, bt_path, 512, root / "report",
+                                                iterations=200, seed=7)
+
+        self.assertEqual(summary["paired_sample_count"], 4)
+        self.assertEqual(summary["paired_accuracy_difference_pp"], 50.0)
+        self.assertEqual(len(summary["paired_accuracy_difference_ci95_pp"]), 2)
+
+    def test_fixed_budget_comparison_rejects_unpaired_samples(self):
+        """Fail instead of silently comparing different question/sample sets."""
+        base = {"dataset": "toy", "budget_tokens": 512, "question_id": "q1",
+                "sample_id": "q1#sample=0", "correct": True, "thinking_tokens": 3,
+                "answer_tokens": 1, "total_tokens": 4, "reasoning_leakage": False,
+                "recheck_count": 0, "approach_switch_count": 0, "latency_seconds": None}
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            qwen_path, bt_path = root / "qwen.jsonl", root / "bt.jsonl"
+            qwen_path.write_text(json.dumps({**base, "policy": "static_budget"}) + "\n",
+                                 encoding="utf-8")
+            bt_path.write_text(json.dumps({**base, "policy": "fixed_budget",
+                                           "sample_id": "q1#sample=1"}) + "\n",
+                               encoding="utf-8")
+            with self.assertRaises(ValueError):
+                compare_fixed_budget_runs(qwen_path, bt_path, 512, root / "report",
+                                          iterations=200)
+
+    def test_fixed_budget_comparison_rejects_different_manifest_content(self):
+        """Matching IDs are insufficient if the saved question/gold manifest changed."""
+        base = {"dataset": "toy", "budget_tokens": 512, "question_id": "q1",
+                "sample_id": "q1#sample=0", "correct": True, "thinking_tokens": 3,
+                "answer_tokens": 1, "total_tokens": 4, "reasoning_leakage": False,
+                "recheck_count": 0, "approach_switch_count": 0, "latency_seconds": None}
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            qwen_path, bt_path = root / "qwen.jsonl", root / "bt.jsonl"
+            qwen_path.write_text(json.dumps({**base, "policy": "static_budget",
+                                             "manifest_fingerprint": "manifest-a"}) + "\n",
+                                 encoding="utf-8")
+            bt_path.write_text(json.dumps({**base, "policy": "fixed_budget",
+                                           "manifest_fingerprint": "manifest-b"}) + "\n",
+                               encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "same manifest"):
+                compare_fixed_budget_runs(qwen_path, bt_path, 512, root / "report",
+                                          iterations=200)
+
     def test_uniform_selection_is_repeatable_and_without_replacement(self):
         """Selection must be deterministic for a seed and contain unique questions."""
         # The same seed must choose the same unbiased subset, with no duplicate problems.
@@ -65,6 +221,22 @@ class BudgetDropSweepTests(unittest.TestCase):
         arms = {spec["arm"] for spec in specs}
         self.assertEqual(arms, {"cut_now", "silent", "resample", "warn_soft", "warn_count"})
         self.assertEqual(len(specs), 2 * (1 + 4))
+
+    def test_grid_adds_absolute_static_budget_arms(self):
+        """Fixed-budget controls are distinct arms keyed by absolute token cap."""
+        specs = make_arm_specs([0.5], [0.1], [512, 1024])
+        fixed = [spec for spec in specs if spec["arm"] == "static_budget"]
+        self.assertEqual([spec["budget_tokens"] for spec in fixed], [512, 1024])
+        self.assertEqual([spec["key"] for spec in fixed],
+                         ["static_budget|b=512", "static_budget|b=1024"])
+
+    def test_fixed_budget_only_mode_omits_fractional_cut_grid(self):
+        """A fixed-budget comparison can run without the fractional cut arms."""
+        args = parse_args(["--fixed-budget-only", "--fixed-budgets", "512"])
+        self.assertEqual(args.cut_points, [])
+        self.assertEqual(args.cut_sizes, [])
+        self.assertEqual(len(make_arm_specs(args.cut_points, args.cut_sizes,
+                                            args.fixed_budgets)), 1)
 
     def test_invalid_budget_grid_is_rejected(self):
         """Reject a grace window that would extend beyond the natural trace."""
@@ -131,13 +303,15 @@ class BudgetDropSweepTests(unittest.TestCase):
         # This one synthetic trace is enough to exercise prefix slicing and all arm builders.
         record = {
             "sid": "toy#sample=0", "id": "toy", "sample": 0,
+            "dataset": "toy",
+            "manifest_fingerprint": "toy-fingerprint",
             "p": {"gold": "42"}, "prompt": [500],
             "gen": [t_open] + reasoning + [t_close], "start": 1,
             "L": len(reasoning), "capped": False,
         }
-        args = SimpleNamespace(trace_batch_size=1, seed=3, hard_cut=False,
+        args = SimpleNamespace(trace_batch_size=1, seed=3, hard_cut=False, model="fake",
                                max_len=10000, answer_max=128)
-        specs = make_arm_specs([0.25], [0.25])
+        specs = make_arm_specs([0.25], [0.25], [8])
         # Temporary output keeps the test isolated and exercises both JSONL and summary export.
         with TemporaryDirectory() as temp_dir:
             run_drop_tests([record], specs, FakeEngine(), tokenizer, t_open, t_close,
@@ -148,6 +322,7 @@ class BudgetDropSweepTests(unittest.TestCase):
             config = {
                 "dataset": "toy", "model": "fake", "selected_problem_count": 1,
                 "samples": 1, "cut_points": [0.25], "cut_sizes": [0.25],
+                "fixed_budgets": [8],
                 "behavior_metrics_note": "heuristic", "resample_control_note": "fresh run",
             }
             (out_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")

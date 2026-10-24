@@ -22,7 +22,7 @@ Execution flow:
       run_dataset() once per selected dataset.
   4. run_dataset() writes the run config, generates/resumes natural traces
       (Phase A), prepares per-trace metadata, then starts the cut sweep (Phase B).
-  5. run_drop_tests() runs continuation arms, forces final answers, and saves
+    5. run_drop_tests() runs continuation and static-budget arms, forces final answers, and saves
       complete trace batches so an interrupted run can resume.
   6. summarize() reads the saved JSONL files and writes summary.json and CSV.
 
@@ -48,6 +48,13 @@ How to run (commands below start from the repository root):
     Full run on a compatible GPU:
         python gpu/budget_drop_bench.py --sweep --dataset all --samples 8
         python gpu/budget_drop_bench.py --sweep --dataset all --samples 8 --resume
+        python gpu/budget_drop_bench.py --sweep --dataset math500 --fixed-budgets 512 1024 2048
+        python gpu/budget_drop_bench.py --sweep --dataset all --samples 8 --manifest-dir results/budget_drop_sweep --model /path/to/another-checkpoint --out results/another-checkpoint
+
+    Fixed-budget comparison with BudgetThinker (run its command in the patched vLLM 0.7.3 environment):
+        python gpu/budget_drop_bench.py --sweep --dataset aime2026 --samples 8 --manifest-dir results/budget_drop_sweep --fixed-budget-only --fixed-budgets 512 --out results/qwen-fixed-512
+        python gpu/budgetthinker_adapter.py --manifest results/budget_drop_sweep/aime2026/manifest.json --budgetthinker-repo BudgeThinker --model /path/to/BudgetThinker-1.5b --budget-tokens 512 --cuda-devices 0 --out results/budgetthinker-aime-512
+        python gpu/compare_fixed_budget_runs.py --qwen-jobs results/qwen-fixed-512/aime2026/jobs.jsonl --budgetthinker-results results/budgetthinker-aime-512/results.jsonl --budget-tokens 512 --out results/comparison-aime-512
 
     Rebuild reports without generating more tokens:
         python gpu/budget_drop_bench.py --sweep --analyze results/budget_drop_sweep/aime2026
@@ -60,6 +67,11 @@ CLI parameter guide (fractions are relative to each natural thinking length L):
     --cut-points P...                Where the budget changes, e.g. 0.25 0.5 0.75.
     --cut-sizes W...                 Additional thinking window, e.g. 0.1 0.25.
                                                                      Every P + W must be at most 1.0.
+    --fixed-budgets B...             Optional absolute caps from the start of thinking;
+                                                                     comparable to fixed-budget methods such as BudgetThinker.
+    --fixed-budget-only              Run natural Phase A and fixed-budget arms only.
+    --manifest-dir DIR               Reuse DIR/<dataset>/manifest.json for exact
+                                                                     question text, IDs, samples, and seed.
     --max-think N                    Natural thinking cap; defaults to 32768 for AIME
                                                                      and 8192 for MATH-500.
     --max-len N / --answer-max N     Model context and answer caps; defaults: 40960/4096.
@@ -77,6 +89,8 @@ CLI parameter guide (fractions are relative to each natural thinking length L):
 The mock command needs Python packages datasets and transformers plus access to the
 dataset and tokenizer files. A real run additionally needs vLLM and a compatible
 CUDA GPU. The --analyze command needs only the saved result files and this code.
+BudgetThinker comparison must run in its patched vLLM 0.7.3 environment; it evaluates a fixed
+budget from generation start, not a mid-generation budget drop.
 """
 from __future__ import annotations
 
@@ -92,7 +106,8 @@ from collections import defaultdict
 from pathlib import Path
 
 import thinking_budget_bench as TB
-from evaluation_contract import build_evaluation_manifest
+from evaluation_contract import (build_evaluation_manifest, manifest_fingerprint,
+                                 problems_from_manifest)
 
 from budget_drop_bench import HARD_CLOSE, WARNS
 
@@ -149,7 +164,8 @@ def uniform_sample(population: list[dict], count: int, seed: int) -> list[dict]:
 
 
 # 按 cut point 和 cut size 组合arm, 生成每个实验组的配置，用for 循环遍历每个点和窗口大小
-def make_arm_specs(cut_points: list[float], cut_sizes: list[float]) -> list[dict]:
+def make_arm_specs(cut_points: list[float], cut_sizes: list[float],
+                   fixed_budgets: list[int] | None = None) -> list[dict]:
     """Build one immediate-cut arm and four comparison arms per grid point.
 
     ``cut_point`` and ``cut_size`` are fractions of a trace's natural thinking
@@ -159,11 +175,15 @@ def make_arm_specs(cut_points: list[float], cut_sizes: list[float]) -> list[dict
     Args:
         cut_points: Fractions of L at which the budget changes.
         cut_sizes: Fractions of L allowed after the change.
+        fixed_budgets: Optional absolute thinking caps from the start of generation.
     Returns:
         Arm dictionaries containing a unique key, arm name, and grid values.
     """
-    if not cut_points or not cut_sizes:
-        raise ValueError("at least one cut point and cut size are required")
+    fixed_budgets = fixed_budgets or []
+    if not fixed_budgets and (not cut_points or not cut_sizes):
+        raise ValueError("provide a cut grid or at least one fixed budget")
+    if bool(cut_points) != bool(cut_sizes):
+        raise ValueError("cut points and cut sizes must be provided together")
     if len(set(cut_points)) != len(cut_points) or len(set(cut_sizes)) != len(cut_sizes):
         raise ValueError("cut points and cut sizes must not contain duplicates")
     for point in cut_points:
@@ -174,6 +194,10 @@ def make_arm_specs(cut_points: list[float], cut_sizes: list[float]) -> list[dict
             raise ValueError("each cut size must be positive")
         if any(point + size > 1.000001 for point in cut_points):
             raise ValueError("cut point + cut size must not exceed 1.0")
+    if any(budget < 1 for budget in fixed_budgets):
+        raise ValueError("fixed budgets must be positive token counts")
+    if len(set(fixed_budgets)) != len(fixed_budgets):
+        raise ValueError("fixed budgets must not contain duplicates")
 
 
     # 在这里会生成每个 cut point 和 cut size arm，包括silent, resample、warn_soft、warn_count 和 cut_now
@@ -190,6 +214,10 @@ def make_arm_specs(cut_points: list[float], cut_sizes: list[float]) -> list[dict
             for arm in ("silent", "resample", "warn_soft", "warn_count"):
                 specs.append({"key": f"{arm}|{suffix}", "arm": arm,
                               "cut_point": point, "cut_size": size})
+    # These controls start from the original question with one absolute cap.
+    for budget in fixed_budgets:
+        specs.append({"key": f"static_budget|b={budget}", "arm": "static_budget",
+                      "cut_point": None, "cut_size": None, "budget_tokens": budget})
     return specs
 
 
@@ -515,7 +543,7 @@ def ensure_run_files(out_dir: Path, config: dict, manifest: dict, resume: bool) 
 # 把原始 Phase A 轨迹解析成实验记录，供同一条轨迹的所有 cut 实验配对使用。
 def natural_records(problems: list[dict], samples: int, prompts: dict[str, list[int]],
                     phase_rows: dict[str, dict], tokenizer, t_open: int, t_close: int,
-                    max_think: int, dataset: str) -> list[dict]:
+                    max_think: int, dataset: str, manifest_hash: str) -> list[dict]:
     """Parse saved Phase A generations into records used by all cut arms.
 
     Each ``sid`` identifies one question/sample pair. Its prompt, natural
@@ -551,6 +579,7 @@ def natural_records(problems: list[dict], samples: int, prompts: dict[str, list[
             thinking_text = tokenizer.decode(thinking_ids, skip_special_tokens=True)
             metrics = behavior_metrics(thinking_text, answer_text)
             records.append({"sid": sid, "id": problem["id"], "sample": sample,
+                            "dataset": dataset, "manifest_fingerprint": manifest_hash,
                             "p": problem, "prompt": prompts[problem["id"]],
                             "gen": generation, **fields,
                             "natural_correct": TB.grade("math500", answer_text, problem["gold"]),
@@ -639,14 +668,22 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
             for spec in specs:
                 if spec["key"] in completed[record["sid"]]:
                     continue
-                if spec["arm"] not in ("resample", "warn_soft", "warn_count"):
+                if spec["arm"] not in ("resample", "static_budget", "warn_soft", "warn_count"):
                     continue
-                cut, extra = add_cut_and_size(record, spec["cut_point"], spec["cut_size"])
+                if spec["arm"] == "static_budget":
+                    prompt = record["prompt"]
+                    available = args.max_len - len(prompt) - 8
+                    if available < 1:
+                        raise ValueError("question prompt exceeds the configured context window")
+                    cap = min(spec["budget_tokens"], available)
+                    reasoning_prefix = []
+                else:
+                    cut, extra = add_cut_and_size(record, spec["cut_point"], spec["cut_size"])
                 if spec["arm"] == "resample":
                     cap = max(1, cut + extra)
                     prompt = record["prompt"]
                     reasoning_prefix = []
-                else:
+                elif spec["arm"] in ("warn_soft", "warn_count"):
                     cap = max(1, extra)
                     prefix = record["gen"][:record["start"] + cut]
                     notice = WARNS[spec["arm"]]
@@ -671,7 +708,10 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
                 if spec["key"] in completed[record["sid"]]:
                     continue
                 arm = spec["arm"]
-                cut, extra = add_cut_and_size(record, spec["cut_point"], spec["cut_size"])
+                if arm == "static_budget":
+                    cut, extra = 0, 0
+                else:
+                    cut, extra = add_cut_and_size(record, spec["cut_point"], spec["cut_size"])
                 closed_itself = None
                 if arm == "cut_now":
                     # Stop at p and ask for an answer immediately.
@@ -692,7 +732,7 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
                     closed_itself = bool(ids and ids[-1] == t_close) or continuation["finish"] == "stop"
                     continuation_thinking = clean_thinking_ids(ids, t_open, t_close)
                     think_ids = task["reasoning_prefix"] + continuation_thinking
-                    if arm == "resample":
+                    if arm in ("resample", "static_budget"):
                         generated = ids if t_open in ids else [t_open] + ids
                         base = record["prompt"] + generated
                     else:
@@ -725,7 +765,16 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
             record, spec = task["record"], task["spec"]
             answer_text = tokenizer.decode(ids, skip_special_tokens=True)
             metrics = behavior_metrics(task["thinking_text"], answer_text)
-            rows.append({"sid": record["sid"], "id": record["id"], "sample": record["sample"],
+            rows.append({"schema_version": 1, "dataset": record["dataset"],
+                         "manifest_fingerprint": record["manifest_fingerprint"],
+                         "method": args.model, "policy": spec["arm"],
+                         "question_id": record["id"], "sample_id": record["sid"],
+                         "sample_index": record["sample"],
+                         "budget_tokens": spec.get("budget_tokens"),
+                         "thinking_tokens": task["think_used"],
+                         "total_tokens": task["think_used"] + len(ids),
+                         "response": answer_text, "latency_seconds": None,
+                         "sid": record["sid"], "id": record["id"], "sample": record["sample"],
                          "key": spec["key"], "arm": spec["arm"],
                          "cut_point": spec["cut_point"], "cut_size": spec["cut_size"],
                          "L": record["L"], "natural_capped": record["capped"],
@@ -757,7 +806,8 @@ def summarize(out_dir: Path) -> dict:
     config = json.loads((out_dir / "config.json").read_text(encoding="utf-8"))
     natural = read_jsonl(out_dir / "natural.jsonl")
     jobs = read_jsonl(out_dir / "jobs.jsonl")
-    specs = make_arm_specs(config["cut_points"], config["cut_sizes"])
+    specs = make_arm_specs(config["cut_points"], config["cut_sizes"],
+                           config.get("fixed_budgets", []))
     by_key = defaultdict(list)
     for row in jobs:
         by_key[row["key"]].append(row)
@@ -789,7 +839,8 @@ def summarize(out_dir: Path) -> dict:
     accuracy_rows = []
     for spec in specs:
         row = {"arm": spec["arm"], "cut_point": spec["cut_point"],
-               "cut_size": spec["cut_size"], "key": spec["key"]}
+             "cut_size": spec["cut_size"],
+             "budget_tokens": spec.get("budget_tokens"), "key": spec["key"]}
         row.update(stats(by_key[spec["key"]], spec["key"]))
         accuracy_rows.append(row)
 
@@ -845,7 +896,7 @@ def summarize(out_dir: Path) -> dict:
                "accuracy_vs_cut": accuracy_rows, "paired_accuracy_differences": paired}
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     csv_path = out_dir / "accuracy_vs_cut.csv"
-    columns = ["arm", "cut_point", "cut_size", "n_samples", "n_problems", "accuracy_pct",
+    columns = ["arm", "cut_point", "cut_size", "budget_tokens", "n_samples", "n_problems", "accuracy_pct",
                "accuracy_ci95_pct", "reasoning_leakage_pct", "mean_rechecks",
                "traces_with_recheck_pct", "mean_approach_switches",
                "traces_with_approach_switch_pct", "mean_think_tokens", "mean_answer_tokens",
@@ -879,12 +930,15 @@ def run_dataset(dataset: str, problems: list[dict], engine, args, tokenizer,
     ## prepare arm specifications and prompts for each problem, 预备每个实验组的配置
     # 分别是make_arm_specs 和 make_prompt 的调用，生成实验组配置和每个问题的提示文本
     # 然后是ensure_run_files，确保输出目录和配置文件存在
-    specs = make_arm_specs(args.cut_points, args.cut_sizes)
+    specs = make_arm_specs(args.cut_points, args.cut_sizes, args.fixed_budgets)
     prompts = {problem["id"]: make_prompt(tokenizer, problem["q"]) for problem in problems}
     manifest = build_evaluation_manifest(dataset, problems, args.samples, args.seed)
+    manifest_hash = manifest_fingerprint(manifest)
     config = {"dataset": dataset, "model": args.model, "samples": args.samples,
               "selected_problem_count": len(problems), "seed": args.seed,
+              "manifest_fingerprint": manifest_hash,
               "cut_points": args.cut_points, "cut_sizes": args.cut_sizes,
+              "fixed_budgets": args.fixed_budgets,
               "max_think": max_think, "max_len": args.max_len,
               "answer_max": args.answer_max, "mock": args.mock,
               "hard_cut": args.hard_cut,
@@ -928,7 +982,7 @@ def run_dataset(dataset: str, problems: list[dict], engine, args, tokenizer,
     # natural_records: 解析轨迹和基线指标
     # --------------------------------------------------------------------------------------------------
     records = natural_records(problems, args.samples, prompts, phase_rows, tokenizer,
-                              t_open, t_close, max_think, dataset)
+                              t_open, t_close, max_think, dataset, manifest_hash)
     natural_rows = []
     for record in records:
         natural_rows.append({"sid": record["sid"], "id": record["id"],
@@ -982,6 +1036,10 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--samples", type=int, default=8)
     parser.add_argument("--cut-points", type=float, nargs="+", default=[0.25, 0.50, 0.75])
     parser.add_argument("--cut-sizes", type=float, nargs="+", default=[0.10, 0.25])
+    parser.add_argument("--fixed-budgets", type=int, nargs="*", default=[],
+                        help="absolute thinking caps from the start, for fixed-budget baselines")
+    parser.add_argument("--fixed-budget-only", action="store_true",
+                        help="run only the absolute-budget arms and natural Phase A baseline")
     parser.add_argument("--max-think", type=int, default=None,
                         help="default: 32768 for AIME and 8192 for MATH-500")
     parser.add_argument("--max-len", type=int, default=40960)
@@ -992,6 +1050,8 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--trace-batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--manifest-dir", type=Path, default=None,
+                        help="reuse frozen manifests in DIR/<dataset>/manifest.json")
     parser.add_argument("--out", type=Path, default=Path("results/budget_drop_sweep"))
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--hard-cut", action="store_true",
@@ -1002,10 +1062,15 @@ def parse_args(argv: list[str] | None = None):
     args = parser.parse_args(argv)
     if args.analyze:
         return args
+    if args.fixed_budget_only:
+        if not args.fixed_budgets:
+            parser.error("--fixed-budget-only requires at least one --fixed-budgets value")
+        args.cut_points = []
+        args.cut_sizes = []
     if args.samples < 1 or args.batch_size < 1 or args.trace_batch_size < 1:
         parser.error("samples and batch sizes must be positive")
     try:
-        make_arm_specs(args.cut_points, args.cut_sizes)
+        make_arm_specs(args.cut_points, args.cut_sizes, args.fixed_budgets)
     except ValueError as error:
         parser.error(str(error))
     if args.dataset in ("all", "aime2026") and args.aime_problems < 1:
@@ -1038,10 +1103,29 @@ def main(argv: list[str] | None = None) -> int:
 
     # load populations and select seeded subsets
     dataset_names = ["aime2026", "math500"] if args.dataset == "all" else [args.dataset]
-    populations = {name: load_population(name, args.aime_dataset) for name in dataset_names}
     counts = {"aime2026": args.aime_problems, "math500": args.math_problems}
-    selected = {name: uniform_sample(population, counts[name], args.seed)
-                for name, population in populations.items()}
+    selected = {}
+    for name in dataset_names:
+        if args.manifest_dir:
+            manifest_path = args.manifest_dir / name / "manifest.json"
+            if not manifest_path.is_file():
+                raise FileNotFoundError(f"frozen manifest not found: {manifest_path}")
+            frozen = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if frozen.get("dataset") != name:
+                raise ValueError(f"manifest dataset {frozen.get('dataset')} does not match {name}")
+            if frozen.get("samples_per_problem") != args.samples:
+                raise ValueError("--samples must match the frozen manifest")
+            if frozen.get("seed") != args.seed:
+                raise ValueError("--seed must match the frozen manifest")
+            if frozen.get("schema_version") == 1:
+                selected[name] = problems_from_manifest(frozen)
+            else:
+                # Older runs saved IDs only; recover their records from the source dataset.
+                population = load_population(name, args.aime_dataset)
+                selected[name] = problems_from_manifest(frozen, population)
+        else:
+            population = load_population(name, args.aime_dataset)
+            selected[name] = uniform_sample(population, counts[name], args.seed)
     all_problems = [problem for items in selected.values() for problem in items]
 
     # select the engine: either a mock or the real Engine implementation
