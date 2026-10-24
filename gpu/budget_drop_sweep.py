@@ -92,6 +92,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import thinking_budget_bench as TB
+from evaluation_contract import build_evaluation_manifest
 
 from budget_drop_bench import HARD_CLOSE, WARNS
 
@@ -880,10 +881,7 @@ def run_dataset(dataset: str, problems: list[dict], engine, args, tokenizer,
     # 然后是ensure_run_files，确保输出目录和配置文件存在
     specs = make_arm_specs(args.cut_points, args.cut_sizes)
     prompts = {problem["id"]: make_prompt(tokenizer, problem["q"]) for problem in problems}
-    manifest = {"dataset": dataset, "seed": args.seed,
-                "selection": "uniform without replacement, selected before generation",
-                "selected_problem_ids": [problem["id"] for problem in problems],
-                "samples_per_problem": args.samples}
+    manifest = build_evaluation_manifest(dataset, problems, args.samples, args.seed)
     config = {"dataset": dataset, "model": args.model, "samples": args.samples,
               "selected_problem_count": len(problems), "seed": args.seed,
               "cut_points": args.cut_points, "cut_sizes": args.cut_sizes,

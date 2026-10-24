@@ -19,10 +19,35 @@ from budget_drop_sweep import (
     summarize,
     uniform_sample,
 )
+from evaluation_contract import build_evaluation_manifest
 
 
 class BudgetDropSweepTests(unittest.TestCase):
     """Behavioral checks for sampling, arm generation, metrics, and report output."""
+
+    def test_shared_manifest_contains_stable_problem_and_sample_ids(self):
+        """All evaluation backends should receive the same per-question samples."""
+        problems = [
+            {"id": "q1", "q": "Question one", "gold": "11"},
+            {"id": "q2", "q": "Question two", "gold": "22"},
+        ]
+        manifest = build_evaluation_manifest("toy", problems, 2, seed=9)
+
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["selected_problem_ids"], ["q1", "q2"])
+        self.assertEqual(
+            [sample["sample_id"] for sample in manifest["samples"]],
+            ["q1#sample=0", "q1#sample=1", "q2#sample=0", "q2#sample=1"],
+        )
+
+    def test_shared_manifest_rejects_duplicate_problem_ids(self):
+        """Duplicate IDs would make paired comparisons ambiguous, so reject them."""
+        duplicate_problems = [
+            {"id": "same", "q": "Question one", "gold": "11"},
+            {"id": "same", "q": "Question two", "gold": "22"},
+        ]
+        with self.assertRaises(ValueError):
+            build_evaluation_manifest("toy", duplicate_problems, 1, seed=9)
 
     def test_uniform_selection_is_repeatable_and_without_replacement(self):
         """Selection must be deterministic for a seed and contain unique questions."""
