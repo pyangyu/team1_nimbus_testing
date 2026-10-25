@@ -1,0 +1,7 @@
+[submodule "BudgeThinker"]
+	path = BudgeThinker
+	url = https://github.com/MobileLLM/BudgetThinker.git
+
+[submodule "Elastic-Reasoning"]
+	path = Elastic-Reasoning
+	url = https://github.com/SalesforceAIResearch/Elastic-Reasoning.git
