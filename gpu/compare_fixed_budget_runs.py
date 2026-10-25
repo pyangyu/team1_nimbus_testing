@@ -63,6 +63,7 @@ def _method_summary(rows: list[dict]) -> dict[str, Any]:
         "accuracy_pct": round(100 * statistics.mean(bool(row["correct"]) for row in rows), 2),
         "mean_thinking_tokens": round(statistics.mean(row["thinking_tokens"] for row in rows), 2),
         "mean_answer_tokens": round(statistics.mean(row["answer_tokens"] for row in rows), 2),
+        "mean_answer_cap": round(statistics.mean(row.get("answer_cap", 0) for row in rows), 2),
         "mean_total_tokens": round(statistics.mean(row["total_tokens"] for row in rows), 2),
         "reasoning_leakage_pct": round(100 * statistics.mean(
             bool(row["reasoning_leakage"]) for row in rows), 2),

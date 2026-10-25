@@ -50,6 +50,7 @@ How to run (commands below start from the repository root):
         python gpu/budget_drop_bench.py --sweep --dataset all --samples 8 --resume
         python gpu/budget_drop_bench.py --sweep --dataset math500 --fixed-budgets 512 1024 2048
         python gpu/budget_drop_bench.py --sweep --dataset all --samples 8 --manifest-dir results/budget_drop_sweep --model /path/to/another-checkpoint --out results/another-checkpoint
+        python gpu/budget_drop_bench.py --sweep --dataset aime2026 --samples 8 --manifest-dir results/budget_drop_sweep --model /path/to/our-sft-checkpoint --cut-points 0.5 --cut-sizes 0.25 --budget-cut-template '<budget_cut left={W}>' --out results/our-sft
 
     Fixed-budget comparison with BudgetThinker (run its command in the patched vLLM 0.7.3 environment):
         python gpu/budget_drop_bench.py --sweep --dataset aime2026 --samples 8 --manifest-dir results/budget_drop_sweep --fixed-budget-only --fixed-budgets 512 --out results/qwen-fixed-512
@@ -70,11 +71,14 @@ CLI parameter guide (fractions are relative to each natural thinking length L):
     --fixed-budgets B...             Optional absolute caps from the start of thinking;
                                                                      comparable to fixed-budget methods such as BudgetThinker.
     --fixed-budget-only              Run natural Phase A and fixed-budget arms only.
+    --budget-cut-template TEXT       Text inserted by the trained-method arm; must
+                                                                     match the model's training-time token format.
     --manifest-dir DIR               Reuse DIR/<dataset>/manifest.json for exact
                                                                      question text, IDs, samples, and seed.
     --max-think N                    Natural thinking cap; defaults to 32768 for AIME
                                                                      and 8192 for MATH-500.
     --max-len N / --answer-max N     Model context and answer caps; defaults: 40960/4096.
+    --fixed-answer-max N            Answer cap for static-budget arms; default: 20.
     --model NAME                     Hugging Face model; default: Qwen/Qwen3-4B.
     --gpu-util F / --max-num-seqs N  vLLM GPU memory fraction/concurrency; defaults: 0.90/4.
     --batch-size N                   Generation prompts per vLLM batch; default: 16.
@@ -211,7 +215,8 @@ def make_arm_specs(cut_points: list[float], cut_sizes: list[float],
         for size in cut_sizes:
             suffix = f"p={p_key}|w={float_key(size)}"
             # These four arms share the same cut point and post-cut allowance.
-            for arm in ("silent", "resample", "warn_soft", "warn_count"):
+            for arm in ("silent", "resample", "warn_soft", "warn_count",
+                        "budget_cut_token"):
                 specs.append({"key": f"{arm}|{suffix}", "arm": arm,
                               "cut_point": point, "cut_size": size})
     # These controls start from the original question with one absolute cap.
@@ -668,7 +673,8 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
             for spec in specs:
                 if spec["key"] in completed[record["sid"]]:
                     continue
-                if spec["arm"] not in ("resample", "static_budget", "warn_soft", "warn_count"):
+                if spec["arm"] not in ("resample", "static_budget", "warn_soft",
+                                       "warn_count", "budget_cut_token"):
                     continue
                 if spec["arm"] == "static_budget":
                     prompt = record["prompt"]
@@ -683,10 +689,13 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
                     cap = max(1, cut + extra)
                     prompt = record["prompt"]
                     reasoning_prefix = []
-                elif spec["arm"] in ("warn_soft", "warn_count"):
+                elif spec["arm"] in ("warn_soft", "warn_count", "budget_cut_token"):
                     cap = max(1, extra)
                     prefix = record["gen"][:record["start"] + cut]
-                    notice = WARNS[spec["arm"]]
+                    if spec["arm"] == "budget_cut_token":
+                        notice = args.budget_cut_template
+                    else:
+                        notice = WARNS[spec["arm"]]
                     prompt = record["prompt"] + prefix + enc(notice.format(W=extra))
                     reasoning_prefix = record["gen"][record["start"]:record["start"] + cut]
                 continuation_tasks.append({"record": record, "spec": spec, "prompt": prompt,
@@ -750,6 +759,8 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
                                     hard_suffix)
                 thinking_text = tokenizer.decode(think_ids, skip_special_tokens=True)
                 cap = answer_cap(model_prompt, args.max_len, args.answer_max)
+                if arm == "static_budget":
+                    cap = min(cap, args.fixed_answer_max)
                 answer_tasks.append({"record": record, "spec": spec, "prompt": model_prompt,
                                      "cap": cap, "think_ids": think_ids,
                                      "think_used": think_used, "closed_itself": closed_itself,
@@ -779,6 +790,7 @@ def run_drop_tests(records: list[dict], specs: list[dict], engine, tokenizer,
                          "cut_point": spec["cut_point"], "cut_size": spec["cut_size"],
                          "L": record["L"], "natural_capped": record["capped"],
                          "think_used": task["think_used"], "answer_tokens": len(ids),
+                         "answer_cap": task["cap"],
                          "closed_itself": task["closed_itself"],
                          "correct": TB.grade("math500", answer_text, record["p"]["gold"]),
                          **metrics, "answer_text": answer_text})
@@ -833,6 +845,7 @@ def summarize(out_dir: Path) -> dict:
                 row["approach_switch_count"] > 0 for row in rows), 2),
             "mean_think_tokens": round(statistics.mean(row["think_used"] for row in rows), 1),
             "mean_answer_tokens": round(statistics.mean(row["answer_tokens"] for row in rows), 1),
+            "mean_answer_cap": round(statistics.mean(row["answer_cap"] for row in rows), 1),
             "capped_trace_pct": round(100 * statistics.mean(row["natural_capped"] for row in rows), 2),
         }
 
@@ -866,7 +879,7 @@ def summarize(out_dir: Path) -> dict:
         if spec["arm"] != "silent":
             continue
         p, w = spec["cut_point"], spec["cut_size"]
-        for other_arm in ("warn_soft", "warn_count", "resample"):
+        for other_arm in ("warn_soft", "warn_count", "resample", "budget_cut_token"):
             other_key = next((item["key"] for item in specs
                               if item["arm"] == other_arm and item["cut_point"] == p
                               and item["cut_size"] == w), None)
@@ -939,8 +952,10 @@ def run_dataset(dataset: str, problems: list[dict], engine, args, tokenizer,
               "manifest_fingerprint": manifest_hash,
               "cut_points": args.cut_points, "cut_sizes": args.cut_sizes,
               "fixed_budgets": args.fixed_budgets,
+              "budget_cut_template": args.budget_cut_template,
               "max_think": max_think, "max_len": args.max_len,
               "answer_max": args.answer_max, "mock": args.mock,
+              "fixed_answer_max": args.fixed_answer_max,
               "hard_cut": args.hard_cut,
               "resample_control_note": "Fresh generation from the original question with total thinking cap cut_point*L + cut_size*L; compared with retaining the natural prefix.",
               "behavior_metrics_note": "Lexical heuristics only: leakage markers in answer text; re-check and approach-switch markers in reasoning text. Inspect evidence and answer_text before interpreting as semantic labels."}
@@ -1040,10 +1055,14 @@ def parse_args(argv: list[str] | None = None):
                         help="absolute thinking caps from the start, for fixed-budget baselines")
     parser.add_argument("--fixed-budget-only", action="store_true",
                         help="run only the absolute-budget arms and natural Phase A baseline")
+    parser.add_argument("--budget-cut-template", default="<budget_cut left={W}>",
+                        help="text inserted by the budget_cut_token arm; must contain {W}")
     parser.add_argument("--max-think", type=int, default=None,
                         help="default: 32768 for AIME and 8192 for MATH-500")
     parser.add_argument("--max-len", type=int, default=40960)
     parser.add_argument("--answer-max", type=int, default=4096)
+    parser.add_argument("--fixed-answer-max", type=int, default=20,
+                        help="answer cap for static-budget arms; matches BudgetThinker's 20-token answer stage")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--gpu-util", type=float, default=0.90)
     parser.add_argument("--max-num-seqs", type=int, default=4)
@@ -1067,8 +1086,12 @@ def parse_args(argv: list[str] | None = None):
             parser.error("--fixed-budget-only requires at least one --fixed-budgets value")
         args.cut_points = []
         args.cut_sizes = []
+    if "{W}" not in args.budget_cut_template:
+        parser.error("--budget-cut-template must contain the {W} placeholder")
     if args.samples < 1 or args.batch_size < 1 or args.trace_batch_size < 1:
         parser.error("samples and batch sizes must be positive")
+    if args.fixed_answer_max < 1:
+        parser.error("--fixed-answer-max must be positive")
     try:
         make_arm_specs(args.cut_points, args.cut_sizes, args.fixed_budgets)
     except ValueError as error:

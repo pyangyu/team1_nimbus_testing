@@ -175,6 +175,7 @@ def normalize_budgetthinker_outputs(
                 "correct": metrics,
                 "thinking_tokens": thinking_tokens,
                 "answer_tokens": answer_tokens,
+                "answer_cap": 20,
                 "total_tokens": thinking_tokens + answer_tokens,
                 "reasoning_leakage": behavior["reasoning_leakage"],
                 "recheck_count": behavior["recheck_count"],
@@ -311,7 +312,8 @@ def run_budgetthinker(args: argparse.Namespace) -> Path:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse BudgetThinker adapter options for an isolated official run."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--budgetthinker-repo", type=Path, default=Path("BudgeThinker"))
     parser.add_argument("--model", required=True,

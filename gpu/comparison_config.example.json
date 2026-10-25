@@ -1,0 +1,37 @@
+{
+  "runs": {
+    "base": "results/base/aime2026/jobs.jsonl",
+    "ours": "results/ours/aime2026/jobs.jsonl",
+    "budgetthinker": "results/budgetthinker-aime-512/results.jsonl"
+  },
+  "contrasts": [
+    {
+      "name": "trained budget-cut token versus base silent cut",
+      "left": {
+        "run": "ours",
+        "policy": "budget_cut_token",
+        "cut_point": 0.5,
+        "cut_size": 0.25
+      },
+      "right": {
+        "run": "base",
+        "policy": "silent",
+        "cut_point": 0.5,
+        "cut_size": 0.25
+      }
+    },
+    {
+      "name": "Qwen static budget versus BudgetThinker fixed budget",
+      "left": {
+        "run": "base",
+        "policy": "static_budget",
+        "budget_tokens": 512
+      },
+      "right": {
+        "run": "budgetthinker",
+        "policy": "fixed_budget",
+        "budget_tokens": 512
+      }
+    }
+  ]
+}

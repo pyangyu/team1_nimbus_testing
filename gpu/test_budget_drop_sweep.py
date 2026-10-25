@@ -25,6 +25,7 @@ from budgetthinker_adapter import (
     prepare_budgetthinker_dataset,
 )
 from compare_fixed_budget_runs import compare_fixed_budget_runs
+from compare_method_runs import compare_methods
 from evaluation_contract import build_evaluation_manifest, problems_from_manifest
 
 
@@ -120,6 +121,7 @@ class BudgetDropSweepTests(unittest.TestCase):
         self.assertEqual([row["sample_id"] for row in rows],
                          ["q1#sample=0", "q1#sample=1"])
         self.assertEqual([row["correct"] for row in rows], [True, False])
+        self.assertEqual([row["answer_cap"] for row in rows], [20, 20])
         self.assertEqual(rows[0]["recheck_count"], 1)
         self.assertEqual(rows[1]["approach_switch_count"], 1)
 
@@ -205,6 +207,79 @@ class BudgetDropSweepTests(unittest.TestCase):
                 compare_fixed_budget_runs(qwen_path, bt_path, 512, root / "report",
                                           iterations=200)
 
+    def test_method_comparison_builds_actual_token_curve_and_cross_arm_contrast(self):
+        """A configured trained-announced vs base-silent contrast uses paired samples."""
+        fingerprint = "frozen-test-manifest"
+
+        def row(question_id, sample_index, policy, correct, total_tokens):
+            return {
+                "schema_version": 1, "dataset": "toy",
+                "manifest_fingerprint": fingerprint,
+                "method": "fake-model", "policy": policy,
+                "question_id": question_id,
+                "sample_id": f"{question_id}#sample={sample_index}",
+                "sample_index": sample_index, "cut_point": 0.5,
+                "cut_size": 0.25, "budget_tokens": None,
+                "correct": correct, "thinking_tokens": total_tokens - 5,
+                "answer_tokens": 5, "total_tokens": total_tokens,
+                "reasoning_leakage": False, "recheck_count": 0,
+                "approach_switch_count": 0, "latency_seconds": None,
+            }
+
+        base_rows = [row("q1", 0, "silent", True, 80),
+                     row("q1", 1, "silent", False, 82),
+                     row("q2", 0, "silent", False, 75),
+                     row("q2", 1, "silent", False, 77)]
+        trained_rows = [row("q1", 0, "budget_cut_token", True, 70),
+                row("q1", 1, "budget_cut_token", True, 72),
+                row("q2", 0, "budget_cut_token", False, 68),
+                row("q2", 1, "budget_cut_token", True, 70)]
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            base_path, trained_path = root / "base.jsonl", root / "trained.jsonl"
+            base_path.write_text("".join(json.dumps(item) + "\n" for item in base_rows),
+                                 encoding="utf-8")
+            trained_path.write_text("".join(json.dumps(item) + "\n" for item in trained_rows),
+                                    encoding="utf-8")
+            config = {
+                "runs": {"base": str(base_path), "trained": str(trained_path)},
+                "contrasts": [{
+                    "name": "trained budget-cut token vs base silent",
+                    "left": {"run": "trained", "policy": "budget_cut_token",
+                             "cut_point": 0.5, "cut_size": 0.25},
+                    "right": {"run": "base", "policy": "silent",
+                              "cut_point": 0.5, "cut_size": 0.25},
+                }],
+            }
+            summary = compare_methods(config, root / "report", iterations=200, seed=3)
+
+        self.assertEqual(len(summary["accuracy_vs_actual_tokens"]), 2)
+        self.assertEqual(summary["paired_contrasts"][0]["n_paired_samples"], 4)
+        self.assertEqual(summary["paired_contrasts"][0]["accuracy_difference_pp"], 50.0)
+        self.assertEqual(summary["paired_contrasts"][0]["mean_total_token_difference"], -8.5)
+
+    def test_method_comparison_rejects_different_manifest_fingerprints(self):
+        """Runs must use identical question text/gold, not merely the same IDs."""
+        base = {"schema_version": 1, "dataset": "toy", "policy": "silent",
+                "cut_point": 0.5, "cut_size": 0.1, "budget_tokens": None,
+                "question_id": "q1", "sample_id": "q1#sample=0",
+                "correct": True, "thinking_tokens": 10, "answer_tokens": 2,
+                "total_tokens": 12, "reasoning_leakage": False,
+                "recheck_count": 0, "approach_switch_count": 0,
+                "latency_seconds": None}
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = []
+            for name, fingerprint in (("base", "manifest-a"), ("ours", "manifest-b")):
+                path = root / f"{name}.jsonl"
+                path.write_text(json.dumps({**base, "manifest_fingerprint": fingerprint}) + "\n",
+                                encoding="utf-8")
+                paths.append(path)
+            config = {"runs": {"base": str(paths[0]), "ours": str(paths[1])}}
+            with self.assertRaisesRegex(ValueError, "manifest fingerprint"):
+                compare_methods(config, root / "report", iterations=200)
+
     def test_uniform_selection_is_repeatable_and_without_replacement(self):
         """Selection must be deterministic for a seed and contain unique questions."""
         # The same seed must choose the same unbiased subset, with no duplicate problems.
@@ -219,8 +294,9 @@ class BudgetDropSweepTests(unittest.TestCase):
         # Each cut point contributes one immediate-cut arm and four window-based arms.
         specs = make_arm_specs([0.25, 0.5], [0.1])
         arms = {spec["arm"] for spec in specs}
-        self.assertEqual(arms, {"cut_now", "silent", "resample", "warn_soft", "warn_count"})
-        self.assertEqual(len(specs), 2 * (1 + 4))
+        self.assertEqual(arms, {"cut_now", "silent", "resample", "warn_soft",
+                    "warn_count", "budget_cut_token"})
+        self.assertEqual(len(specs), 2 * (1 + 5))
 
     def test_grid_adds_absolute_static_budget_arms(self):
         """Fixed-budget controls are distinct arms keyed by absolute token cap."""
@@ -284,13 +360,17 @@ class BudgetDropSweepTests(unittest.TestCase):
 
             def decode(self, ids, skip_special_tokens=True):
                 """Decode the reversible character IDs produced by encode()."""
-                return "".join(chr(token - 10) for token in ids)
+                return "".join(chr(token - 10) for token in ids if token >= 10)
 
         class FakeEngine:
             """Mimic continuation and answer calls made by the real engine adapter."""
 
+            def __init__(self):
+                self.prompts = []
+
             def generate(self, prompts, max_tokens, seeds, stop_ids=None):
                 """Return a short continuation or a fixed correct answer per prompt."""
+                self.prompts.extend(prompts)
                 if stop_ids:
                     return [([300, 301], "stop") for _ in prompts]
                 answer = "The answer is \\boxed{42}. First, we calculate it."
@@ -310,11 +390,13 @@ class BudgetDropSweepTests(unittest.TestCase):
             "L": len(reasoning), "capped": False,
         }
         args = SimpleNamespace(trace_batch_size=1, seed=3, hard_cut=False, model="fake",
-                               max_len=10000, answer_max=128)
+                       budget_cut_template="<budget_cut left={W}>",
+                               max_len=10000, answer_max=128, fixed_answer_max=20)
         specs = make_arm_specs([0.25], [0.25], [8])
+        fake_engine = FakeEngine()
         # Temporary output keeps the test isolated and exercises both JSONL and summary export.
         with TemporaryDirectory() as temp_dir:
-            run_drop_tests([record], specs, FakeEngine(), tokenizer, t_open, t_close,
+            run_drop_tests([record], specs, fake_engine, tokenizer, t_open, t_close,
                            tokenizer.encode, args, Path(temp_dir))
             from budget_drop_sweep import read_jsonl
             rows = read_jsonl(Path(temp_dir) / "jobs.jsonl")
@@ -336,8 +418,10 @@ class BudgetDropSweepTests(unittest.TestCase):
         self.assertEqual({row["key"] for row in rows}, {spec["key"] for spec in specs})
         self.assertTrue(all(row["correct"] for row in rows))
         self.assertTrue(all(row["reasoning_leakage"] for row in rows))
+        decoded_prompts = [tokenizer.decode(prompt) for prompt in fake_engine.prompts]
+        self.assertTrue(any("<budget_cut left=" in prompt for prompt in decoded_prompts))
         self.assertEqual(len(summary["accuracy_vs_cut"]), len(specs))
-        self.assertEqual(len(summary["paired_accuracy_differences"]), 3)
+        self.assertEqual(len(summary["paired_accuracy_differences"]), 4)
         self.assertTrue(csv_exists)
 
 
