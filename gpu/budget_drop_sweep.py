@@ -55,7 +55,8 @@ How to run (commands below start from the repository root):
     Fixed-budget comparison with BudgetThinker (run its command in the patched vLLM 0.7.3 environment):
         python gpu/budget_drop_bench.py --sweep --dataset aime2026 --samples 8 --manifest-dir results/budget_drop_sweep --fixed-budget-only --fixed-budgets 512 --out results/qwen-fixed-512
         python gpu/budgetthinker_adapter.py --manifest results/budget_drop_sweep/aime2026/manifest.json --budgetthinker-repo BudgeThinker --model /path/to/BudgetThinker-1.5b --budget-tokens 512 --cuda-devices 0 --out results/budgetthinker-aime-512
-        python gpu/compare_fixed_budget_runs.py --qwen-jobs results/qwen-fixed-512/aime2026/jobs.jsonl --budgetthinker-results results/budgetthinker-aime-512/results.jsonl --budget-tokens 512 --out results/comparison-aime-512
+        # Update gpu/comparison_config.example.json with these run paths, then:
+        python gpu/compare_method_runs.py --config gpu/comparison_config.example.json --out results/comparison/aime2026
 
     Rebuild reports without generating more tokens:
         python gpu/budget_drop_bench.py --sweep --analyze results/budget_drop_sweep/aime2026

@@ -24,7 +24,6 @@ from budgetthinker_adapter import (
     normalize_budgetthinker_outputs,
     prepare_budgetthinker_dataset,
 )
-from compare_fixed_budget_runs import compare_fixed_budget_runs
 from compare_method_runs import compare_methods
 from evaluation_contract import build_evaluation_manifest, problems_from_manifest
 from elastic_reasoning_adapter import _as_response_list, make_elastic_rows
@@ -146,88 +145,6 @@ class BudgetDropSweepTests(unittest.TestCase):
         self.assertEqual([row["answer_cap"] for row in rows], [20, 20])
         self.assertEqual(rows[0]["recheck_count"], 1)
         self.assertEqual(rows[1]["approach_switch_count"], 1)
-
-    def test_fixed_budget_comparison_pairs_samples_and_bootstraps_by_question(self):
-        """Compare only matching question/sample IDs and write a clustered CI."""
-        qwen_rows = [
-            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
-             "question_id": "q1", "sample_id": "q1#sample=0", "correct": True,
-             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
-             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
-             "latency_seconds": None},
-            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
-             "question_id": "q1", "sample_id": "q1#sample=1", "correct": True,
-             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
-             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
-             "latency_seconds": None},
-            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
-             "question_id": "q2", "sample_id": "q2#sample=0", "correct": False,
-             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
-             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
-             "latency_seconds": None},
-            {"dataset": "toy", "policy": "static_budget", "budget_tokens": 512,
-             "question_id": "q2", "sample_id": "q2#sample=1", "correct": True,
-             "thinking_tokens": 500, "answer_tokens": 10, "total_tokens": 510,
-             "reasoning_leakage": False, "recheck_count": 0, "approach_switch_count": 0,
-             "latency_seconds": None},
-        ]
-        for row in qwen_rows:
-            row["manifest_fingerprint"] = "same-manifest"
-        bt_rows = []
-        for source, correct in zip(qwen_rows, [True, False, False, False]):
-            bt_rows.append({**source, "method": "budgetthinker", "policy": "fixed_budget",
-                            "correct": correct})
-
-        with TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            qwen_path, bt_path = root / "qwen.jsonl", root / "bt.jsonl"
-            qwen_path.write_text("".join(json.dumps(row) + "\n" for row in qwen_rows),
-                                 encoding="utf-8")
-            bt_path.write_text("".join(json.dumps(row) + "\n" for row in bt_rows),
-                               encoding="utf-8")
-            summary = compare_fixed_budget_runs(qwen_path, bt_path, 512, root / "report",
-                                                iterations=200, seed=7)
-
-        self.assertEqual(summary["paired_sample_count"], 4)
-        self.assertEqual(summary["paired_accuracy_difference_pp"], 50.0)
-        self.assertEqual(len(summary["paired_accuracy_difference_ci95_pp"]), 2)
-
-    def test_fixed_budget_comparison_rejects_unpaired_samples(self):
-        """Fail instead of silently comparing different question/sample sets."""
-        base = {"dataset": "toy", "budget_tokens": 512, "question_id": "q1",
-                "sample_id": "q1#sample=0", "correct": True, "thinking_tokens": 3,
-                "answer_tokens": 1, "total_tokens": 4, "reasoning_leakage": False,
-                "recheck_count": 0, "approach_switch_count": 0, "latency_seconds": None}
-        with TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            qwen_path, bt_path = root / "qwen.jsonl", root / "bt.jsonl"
-            qwen_path.write_text(json.dumps({**base, "policy": "static_budget"}) + "\n",
-                                 encoding="utf-8")
-            bt_path.write_text(json.dumps({**base, "policy": "fixed_budget",
-                                           "sample_id": "q1#sample=1"}) + "\n",
-                               encoding="utf-8")
-            with self.assertRaises(ValueError):
-                compare_fixed_budget_runs(qwen_path, bt_path, 512, root / "report",
-                                          iterations=200)
-
-    def test_fixed_budget_comparison_rejects_different_manifest_content(self):
-        """Matching IDs are insufficient if the saved question/gold manifest changed."""
-        base = {"dataset": "toy", "budget_tokens": 512, "question_id": "q1",
-                "sample_id": "q1#sample=0", "correct": True, "thinking_tokens": 3,
-                "answer_tokens": 1, "total_tokens": 4, "reasoning_leakage": False,
-                "recheck_count": 0, "approach_switch_count": 0, "latency_seconds": None}
-        with TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            qwen_path, bt_path = root / "qwen.jsonl", root / "bt.jsonl"
-            qwen_path.write_text(json.dumps({**base, "policy": "static_budget",
-                                             "manifest_fingerprint": "manifest-a"}) + "\n",
-                                 encoding="utf-8")
-            bt_path.write_text(json.dumps({**base, "policy": "fixed_budget",
-                                           "manifest_fingerprint": "manifest-b"}) + "\n",
-                               encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "same manifest"):
-                compare_fixed_budget_runs(qwen_path, bt_path, 512, root / "report",
-                                          iterations=200)
 
     def test_method_comparison_builds_actual_token_curve_and_cross_arm_contrast(self):
         """A configured trained-announced vs base-silent contrast uses paired samples."""
