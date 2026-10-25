@@ -27,6 +27,7 @@ from budgetthinker_adapter import (
 from compare_fixed_budget_runs import compare_fixed_budget_runs
 from compare_method_runs import compare_methods
 from evaluation_contract import build_evaluation_manifest, problems_from_manifest
+from elastic_reasoning_adapter import _as_response_list, make_elastic_rows
 
 
 class BudgetDropSweepTests(unittest.TestCase):
@@ -92,6 +93,27 @@ class BudgetDropSweepTests(unittest.TestCase):
         self.assertEqual(rows[0]["question"], "Question one")
         self.assertEqual(rows[0]["gt_cot"], "\\boxed{42}")
         self.assertEqual(index_map[0]["question_id"], "q1")
+
+    def test_elastic_data_adapter_preserves_manifest_and_reward_fields(self):
+        """Elastic receives the same question and gold answer in its Parquet row schema."""
+        manifest = build_evaluation_manifest(
+            "aime2026", [{"id": "q1", "q": "Question one", "gold": "42"}], 2, seed=4)
+        rows = make_elastic_rows(manifest)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["question_id"], "q1")
+        self.assertEqual(rows[0]["prompt"][0]["role"], "user")
+        self.assertIn("Question one", rows[0]["prompt"][0]["content"])
+        self.assertEqual(rows[0]["reward_model"]["ground_truth"], "42")
+        self.assertEqual(rows[0]["data_source"], "lighteval/MATH")
+
+    def test_elastic_response_lists_accept_array_like_parquet_values(self):
+        """Parquet list columns may load as array-like objects rather than Python lists."""
+        class ArrayLike:
+            def tolist(self):
+                return ["reasoning one", "reasoning two"]
+
+        self.assertEqual(_as_response_list(ArrayLike()), ["reasoning one", "reasoning two"])
 
     def test_budgetthinker_output_normalizes_to_paired_sample_rows(self):
         """Explode official per-question sample arrays into shared sample IDs."""
