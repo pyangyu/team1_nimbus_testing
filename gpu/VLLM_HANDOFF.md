@@ -20,11 +20,11 @@ The root `.gitmodules` registers both `BudgeThinker` and `Elastic-Reasoning`. Do
 
 These runners depend on different vLLM stacks. Do not install them into one Python environment.
 
-| Runner | vLLM / Transformers notes |
-|---|---|
-| Current Qwen sweep | Existing Qwen environment; prior benchmark runs use vLLM 0.31. |
-| BudgetThinker | Its README requires a patched vLLM 0.7.3 `ModelRunner` and Transformers 4.46.1. The adapter checks the vLLM version and patch before launching. |
-| Elastic-Reasoning | Its `verl/pyproject.toml` pins `vllm<=0.6.3` and `transformers<4.48`. Install and run it in the Elastic repository's own environment. |
+| Runner             | vLLM / Transformers notes                                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Current Qwen sweep | Existing Qwen environment; prior benchmark runs use vLLM 0.31.                                                                                  |
+| BudgetThinker      | Its README requires a patched vLLM 0.7.3 `ModelRunner` and Transformers 4.46.1. The adapter checks the vLLM version and patch before launching. |
+| Elastic-Reasoning  | Its `verl/pyproject.toml` pins `vllm<=0.6.3` and `transformers<4.48`. Install and run it in the Elastic repository's own environment.           |
 
 Elastic's documented setup is:
 
